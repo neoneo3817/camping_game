@@ -48,6 +48,7 @@ function captureCampSnapshot(name) {
     season: campStory.season,
     gear: (appdb.decorations || []).filter(x => x.kind === 'campingGear' && x.sceneTarget === 'world').map(x => ({...x})),
     nature: campDraftItems.map(x => ({...x})),
+    characterFile: typeof campCharacterFile === 'string' ? campCharacterFile : 'Adventurer_boy.glb',
     innerCleared: !!campInnerCleared,
     camera: currentCamera && currentControls ? {
       position: currentCamera.position.toArray(),
@@ -143,7 +144,7 @@ async function getCampCloudSession() {
 
 async function upsertCampProfile(displayName) {
   const {client, user} = await getCampCloudSession();
-  const {error} = await client.from('camp_profiles').upsert({user_id: user.id, display_name: displayName, updated_at: new Date().toISOString()});
+    const {error} = await client.from('camp_profiles').upsert({user_id: user.id, display_name: displayName, updated_at: new Date().toISOString()}, {onConflict: 'user_id'});
   if (error) throw error;
   return {client, user};
 }
@@ -161,7 +162,7 @@ async function saveCampToServer() {
     if (!displayName) { campStorageToast('먼저 이름을 입력해 주세요.'); showCampNamePrompt(); return; }
     const {client, user} = await upsertCampProfile(displayName);
     const snapshot = captureCampSnapshot(displayName);
-    const {error} = await client.from('camping_spaces').upsert({user_id: user.id, snapshot, saved_at: new Date().toISOString()});
+    const {error} = await client.from('camping_spaces').upsert({user_id: user.id, snapshot, saved_at: new Date().toISOString()}, {onConflict: 'user_id'});
     if (error) throw error;
     campStorageToast('캠핑장을 Supabase 서버에 저장했어요.');
   } catch (error) {
@@ -175,7 +176,11 @@ async function openFriendCampsites() {
     const {client, user} = await getCampCloudSession();
     const spacesResult = await client.from('camping_spaces').select('user_id,snapshot,saved_at').neq('user_id', user.id).order('saved_at', {ascending: false});
     if (spacesResult.error) throw spacesResult.error;
-    const spaces = spacesResult.data || [];
+    const spacesByUser = new Map();
+    for (const row of spacesResult.data || []) {
+      if (row.user_id !== user.id && !spacesByUser.has(row.user_id)) spacesByUser.set(row.user_id, row);
+    }
+    const spaces = [...spacesByUser.values()];
     if (!spaces.length) { campStorageModal('친구 캠핑장 놀러가기', '<p style="color:#d6cfdf">아직 서버에 저장된 친구 캠핑장이 없어요.</p>'); return; }
     const ids = spaces.map(x => x.user_id);
     const profileResult = await client.from('camp_profiles').select('user_id,display_name').in('user_id', ids);
@@ -223,6 +228,20 @@ function initCampStorage() {
     campStory.active = true;
     campStory.setupIndex = campSetup.length;
     campVisitState = pending.visit || null;
+    if (campVisitState) {
+      const validCharacters = ['Adventurer_boy.glb', 'Adventurer_girl.glb', 'Soldier_boy.glb', 'Soldier_girl.glb'];
+      window.slowcampFriendCharacter = {
+        file: validCharacters.includes(snapshot.characterFile) ? snapshot.characterFile : 'Adventurer_boy.glb',
+        name: campVisitState.displayName || '캠핑 친구'
+      };
+    } else {
+      window.slowcampFriendCharacter = null;
+      const validCharacters = ['Adventurer_boy.glb', 'Adventurer_girl.glb', 'Soldier_boy.glb', 'Soldier_girl.glb'];
+      if (validCharacters.includes(snapshot.characterFile)) {
+        localStorage.setItem('slowcampCharacterFileV1', snapshot.characterFile);
+        campCharacterFile = snapshot.characterFile;
+      }
+    }
     window.slowcampStartupSnapshot = snapshot;
   } catch (error) { console.error('Could not restore campsite:', error); }
 }
@@ -233,6 +252,47 @@ function applyStartupCampCamera() {
   if (Array.isArray(cameraState.position)) camera.position.fromArray(cameraState.position);
   if (Array.isArray(cameraState.target)) controls.target.fromArray(cameraState.target);
   controls.update();
+}
+
+function loadFriendCampCharacter() {
+  const friend = window.slowcampFriendCharacter;
+  if (!friend || !window.THREE || !loader || !world) return;
+  const loadPromise = new Promise(resolve => loader.load(encodeURI('./charactor/' + friend.file), gltf => {
+    if (window.slowcampFriendCharacter !== friend || !world) { resolve(null); return; }
+    const model = gltf.scene;
+    const bounds = new THREE.Box3().setFromObject(model);
+    const size = bounds.getSize(new THREE.Vector3());
+    const center = bounds.getCenter(new THREE.Vector3());
+    const scale = 2.05 / (size.y || 1);
+    model.scale.setScalar(scale);
+    model.position.set(-center.x * scale, -bounds.min.y * scale, -center.z * scale);
+    model.traverse(node => {
+      if (node.isMesh) {
+        node.castShadow = true;
+        node.receiveShadow = true;
+        node.material = Array.isArray(node.material) ? node.material.map(fixMaterial) : fixMaterial(node.material);
+      }
+    });
+    const group = new THREE.Group();
+    group.add(model);
+    const tent = (appdb.decorations || []).find(item => item.kind === 'campingGear' && campingGearCatalog.find(gear => gear.id === item.asset)?.category === '텐트');
+    const x = tent ? Math.max(-8, Math.min(8, tent.x + 2.2)) : 2.2;
+    const z = tent ? Math.max(-8, Math.min(8, tent.z + 1.8)) : 1.8;
+    group.position.set(x, -.14, z);
+    group.userData.campFriendCharacter = true;
+    world.add(group);
+
+    const canvas = document.createElement('canvas');
+    canvas.width = 320; canvas.height = 110;
+    const ctx = canvas.getContext('2d');
+    ctx.beginPath();ctx.moveTo(40,10);ctx.lineTo(280,10);ctx.quadraticCurveTo(300,10,300,30);ctx.lineTo(300,62);ctx.quadraticCurveTo(300,82,280,82);ctx.lineTo(178,82);ctx.lineTo(160,103);ctx.lineTo(142,82);ctx.lineTo(40,82);ctx.quadraticCurveTo(20,82,20,62);ctx.lineTo(20,30);ctx.quadraticCurveTo(20,10,40,10);ctx.closePath();ctx.fillStyle='rgba(27,25,39,.68)';ctx.fill();ctx.lineWidth=3;ctx.strokeStyle='rgba(255,255,255,.5)';ctx.stroke();ctx.font='bold 25px sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillStyle='rgba(255,255,255,.96)';ctx.fillText(String(friend.name).slice(0,12),160,47);
+    const texture = new THREE.CanvasTexture(canvas);texture.encoding = THREE.sRGBEncoding;
+    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({map:texture,transparent:true,depthTest:false,depthWrite:false}));
+    sprite.position.set(0,2.3,0);sprite.scale.set(1.38,.48,1);group.add(sprite);
+    resolve(group);
+  }, undefined, error => { console.warn('친구 캐릭터를 불러오지 못했어요:', error); resolve(null); }));
+  pendingAssets.push(loadPromise);
+  return loadPromise;
 }
 
 function initCampStorageButtons() {
