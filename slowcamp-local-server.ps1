@@ -23,6 +23,14 @@ try {
             if ($parts.Length -lt 2) { continue }
 
             $relative = [System.Uri]::UnescapeDataString(($parts[1] -split '\?', 2)[0]).TrimStart('/')
+            if ($relative -eq 'api/camping-gear-catalog') {
+                $gearRoot = Join-Path $root 'camping_gear'
+                $paths = @(Get-ChildItem -LiteralPath $gearRoot -Recurse -File -Filter '*.glb' | ForEach-Object { $_.FullName.Substring($root.Length).TrimStart('\').Replace('\', '/') })
+                $json = ConvertTo-Json -InputObject $paths -Compress
+                $bytes = [System.Text.Encoding]::UTF8.GetBytes($json)
+                $head = "HTTP/1.1 200 OK`r`nContent-Type: application/json; charset=utf-8`r`nContent-Length: $($bytes.Length)`r`nCache-Control: no-cache`r`nConnection: close`r`n`r`n"
+                $headerBytes = [System.Text.Encoding]::ASCII.GetBytes($head); $stream.Write($headerBytes, 0, $headerBytes.Length); $stream.Write($bytes, 0, $bytes.Length); continue
+            }
             if ([string]::IsNullOrWhiteSpace($relative)) { $relative = 'index.html' }
             $target = [System.IO.Path]::GetFullPath((Join-Path $root $relative))
             if (-not $target.StartsWith($base, [System.StringComparison]::OrdinalIgnoreCase)) {
