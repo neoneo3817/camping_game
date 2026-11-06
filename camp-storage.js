@@ -156,7 +156,9 @@ function showCampCloudSetup(error) {
 }
 
 async function saveCampToServer() {
-  if (campVisitState) { campStorageToast('친구 캠핑장은 보기 전용이에요.'); return; }
+  if (campVisitState) {
+    try { const displayName=(localStorage.getItem('slowcampUserNameV1')||'').trim(); if(!displayName){campStorageToast('먼저 이름을 입력해 주세요.');return;} const {client,user}=await upsertCampProfile(displayName); const gifts=(appdb.decorations||[]).filter(x=>x.guestAddedFor===campVisitState.userId&&x.guestAdded); if(!gifts.length){campStorageToast('친구에게 보탤 장비가 없어요. 먼저 장비를 배치해 주세요.');return;} const rows=gifts.map(item=>({owner_user_id:campVisitState.userId,contributor_user_id:user.id,contributor_name:displayName,source_item_id:item.id,item:{asset:item.asset,x:item.x,z:item.z,rot:item.rot},created_at:new Date().toISOString()})); const {error}=await client.from('camp_guest_items').upsert(rows,{onConflict:'owner_user_id,contributor_user_id,source_item_id'});if(error)throw error;campStorageToast('친구에게 장비를 전달했어요. 다음 접속 때 친구 캠핑장에 표시돼요.');}catch(error){console.error('Friend campsite contribution failed:',error);showCampCloudSetup(error)} return;
+  }
   try {
     const displayName = (localStorage.getItem('slowcampUserNameV1') || '').trim();
     if (!displayName) { campStorageToast('먼저 이름을 입력해 주세요.'); showCampNamePrompt(); return; }
@@ -228,7 +230,7 @@ function initCampStorage() {
     campStory.active = true;
     campStory.setupIndex = campSetup.length;
     campVisitState = pending.visit || null;
-    if (campVisitState) {
+    if (campVisitState) { loadFriendReactions();
       const validCharacters = ['Adventurer_boy.glb', 'Adventurer_girl.glb', 'Soldier_boy.glb', 'Soldier_girl.glb'];
       window.slowcampFriendCharacter = {
         file: validCharacters.includes(snapshot.characterFile) ? snapshot.characterFile : 'Adventurer_boy.glb',
@@ -295,6 +297,9 @@ function loadFriendCampCharacter() {
   return loadPromise;
 }
 
+async function saveFriendReaction(itemId,heart,message){if(!campVisitState)return;try{const displayName=(localStorage.getItem('slowcampUserNameV1')||'캠핑 친구').trim(),{client,user}=await upsertCampProfile(displayName),old=(window.slowcampFriendReactions||[]).find(x=>x.item_id===itemId&&x.visitor_user_id===user.id)||{},row={owner_user_id:campVisitState.userId,visitor_user_id:user.id,item_id:itemId,heart:heart?true:!!old.heart,message:message===null?old.message:message,updated_at:new Date().toISOString()},{error}=await client.from('camp_item_reactions').upsert(row,{onConflict:'owner_user_id,visitor_user_id,item_id'});if(error)throw error;await loadFriendReactions()}catch(error){console.error('Friend item reaction failed:',error);showCampCloudSetup(error)}}
+async function loadFriendReactions(){if(!campVisitState)return;try{const {client}=await getCampCloudSession(),{data,error}=await client.from('camp_item_reactions').select('item_id,visitor_user_id,heart,message,updated_at').eq('owner_user_id',campVisitState.userId).order('updated_at',{ascending:true});if(error)throw error;window.slowcampFriendReactions=data||[];window.renderFriendReactionMarkers?.()}catch(error){console.warn('Friend reactions could not be loaded:',error)}}
+async function checkIncomingGuestItems(){try{const name=(localStorage.getItem('slowcampUserNameV1')||'').trim();if(!name||campVisitState)return;const {client,user}=await upsertCampProfile(name),{data,error}=await client.from('camp_guest_items').select('id,item,contributor_name').eq('owner_user_id',user.id).is('accepted_at',null);if(error)throw error;if(!data?.length)return;const incoming=data.filter(row=>!(appdb.decorations||[]).some(x=>x.guestContributionId===row.id)).map(row=>({id:'guest-'+row.id,kind:'campingGear',sceneTarget:'world',...row.item,guestContributionId:row.id}));appdb.decorations.push(...incoming);save();for(const item of incoming)if(typeof loadGearProp==='function'&&world)loadGearProp(item,world,-.14);const snapshot=captureCampSnapshot(name),{error:saveError}=await client.from('camping_spaces').upsert({user_id:user.id,snapshot,saved_at:new Date().toISOString()},{onConflict:'user_id'});if(saveError)throw saveError;const ids=data.map(x=>x.id),{error:updateError}=await client.from('camp_guest_items').update({accepted_at:new Date().toISOString()}).in('id',ids);if(updateError)throw updateError;campStorageModal('친구가 배치한 아이템이 있어요','<p style="color:#e8dfff">친구가 내 캠핑장에 '+data.length+'개의 장비를 보탰어요. 배치된 장비를 확인해 보세요.</p>')}catch(error){console.warn('Incoming friend items could not be loaded:',error)}}
 function initCampStorageButtons() {
   const button = document.getElementById('campVisitReturn');
   if (button) button.style.display = campVisitState ? 'inline-flex' : 'none';
