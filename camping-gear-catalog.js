@@ -14,10 +14,18 @@
     '10.food/Icebox1.glb':['8-etc-ice-box-beige'],'10.food/Icebox2.glb':['8-etc-ice-box-khaki'],'10.food/Icebox3.glb':['8-etc-ice-box-white'],'10.food/Water.glb':['8-etc-water-bottle'],
     '11.tools/Propane.glb':['8-etc-propane-tank'],'11.tools/Radio.glb':['8-etc-radio'],'11.tools/Shovel.glb':['8-etc-shovel'],'11.tools/Wagon.glb':['8-etc-wagon']
   };
+  // 개별 모델 크기 배율: '폴더/파일명.glb':배율 (1=기본, 1.5=1.5배, 0.7=70%). 적지 않은 파일은 기본 크기.
+  // 폴더에 새 파일이 들어오면 자동으로 인식되고, 여기에 적어야만 배율이 적용돼요.
+  const scaleMulByFile={
+     '2.tent/military1.5.glb':1.5,
+     '2.tent/military2.glb':2.0,
+     '2.tent/tarp1.3.glb':1.3,
+     '14.tactical/aeroplane.glb':2.0,
+  };
   const slug=s=>s.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'');
   const makeItems=paths=>paths.filter(x=>/^camping_gear\/\d+\.[^/]+\/[^/]+\.glb$/i.test(x)).map(path=>{
     const parts=path.split('/'),folder=parts[1],file=parts[2],m=folder.match(/^(\d+)\./),number=m?Number(m[1]):99,category=categoryByNumber[number]||'기타',name=file.replace(/\.glb$/i,''),folderSlug=folder.replace(/^\d+\.\s*/,'').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,''),id=number+'-'+folderSlug+'-'+slug(name),size=({1:3.5,2:2.8,3:1.3,4:1.6,5:1.6,6:1.2,7:1,13:1.85}[number]||1.2),relative=path.split('/').map(encodeURIComponent).join('/');
-    return {id,category,emoji:emojiByCategory[category]||'🎒',label:name,format:'glb',size,path:'./'+relative,legacyIds:oldIdsByFile[folder+'/'+file]||[],folderNumber:number,isCrew:number===13};
+    return {id,category,emoji:emojiByCategory[category]||'🎒',label:name,format:'glb',size,path:'./'+relative,legacyIds:oldIdsByFile[folder+'/'+file]||[],folderNumber:number,isCrew:number===13,scaleMul:scaleMulByFile[folder+'/'+file]||1};
   }).sort((a,b)=>{const na=Number(a.id.split('-')[0]),nb=Number(b.id.split('-')[0]);return na-nb||a.label.localeCompare(b.label)});
   window.campingGearCatalogReady=(async()=>{
     try{
